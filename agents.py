@@ -15,7 +15,13 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import stats
 import warnings
-warnings.filterwarnings('ignore')
+import io
+import base64
+import tempfile
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -24,9 +30,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Ollama configuration
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-MODEL_NAME = os.getenv("OLLAMA_MODEL", "gemma3:4b")
+# Gemini API configuration
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-preview-05-20")
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY environment variable is required")
 
 # Define the agent state
 class AgentState(TypedDict):
@@ -40,30 +50,161 @@ class AgentState(TypedDict):
     result: Dict
     error: str
     next_action: str
+    plot_path: str
 
-async def generate_with_ollama(prompt, temperature=0.2):
-    """Generate response using Ollama with the specified model."""
-    url = f"{OLLAMA_BASE_URL}/api/generate"
+async def generate_with_gemini(prompt, temperature=0.2):
+    """Generate response using Gemini API."""
+    url = f"{GEMINI_BASE_URL}/{GEMINI_MODEL}:generateContent"
+    
+    headers = {
+        "Content-Type": "application/json",
+    }
     
     payload = {
-        "model": MODEL_NAME,
-        "prompt": prompt,
-        "stream": False,
-        "options": {
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "text": prompt
+                    }
+                ]
+            }
+        ],
+        "generationConfig": {
             "temperature": temperature,
-            "top_p": 0.95,
-        }
+            "topP": 0.95,
+            "topK": 40,
+            "maxOutputTokens": 8192,
+        },
+        "safetySettings": [
+            {
+                "category": "HARM_CATEGORY_HARASSMENT",
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+            },
+            {
+                "category": "HARM_CATEGORY_HATE_SPEECH", 
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+            },
+            {
+                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+            },
+            {
+                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+            }
+        ]
     }
     
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(url, json=payload)
+            response = await client.post(
+                url, 
+                json=payload, 
+                headers=headers,
+                params={"key": GEMINI_API_KEY}
+            )
             response.raise_for_status()
             result = response.json()
-            return result.get("response", "")
+            
+            # Extract text from Gemini response
+            if "candidates" in result and len(result["candidates"]) > 0:
+                candidate = result["candidates"][0]
+                if "content" in candidate and "parts" in candidate["content"]:
+                    return candidate["content"]["parts"][0].get("text", "")
+            
+            return ""
+            
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error from Gemini API: {e.response.status_code} - {e.response.text}")
+        raise HTTPException(status_code=e.response.status_code, detail=f"Gemini API error: {e.response.text}")
     except Exception as e:
-        logger.error(f"Error generating response with Ollama: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error generating response with Ollama: {str(e)}")
+        logger.error(f"Error generating response with Gemini: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error generating response with Gemini: {str(e)}")
+
+def create_chart(df: pd.DataFrame, chart_config: Dict) -> str:
+    """Create a matplotlib chart and return the base64 encoded image."""
+    try:
+        plt.style.use('seaborn-v0_8')
+        fig, ax = plt.subplots(figsize=(12, 8))
+        
+        chart_type = chart_config.get("chart_type", "bar")
+        x_axis = chart_config.get("x_axis")
+        y_axis = chart_config.get("y_axis")
+        title = chart_config.get("title", "Chart")
+        aggregation = chart_config.get("aggregation", "none")
+        
+        # Handle data aggregation if needed
+        plot_df = df.copy()
+        if aggregation != "none" and x_axis and y_axis:
+            if aggregation == "sum":
+                plot_df = df.groupby(x_axis)[y_axis].sum().reset_index()
+            elif aggregation == "mean":
+                plot_df = df.groupby(x_axis)[y_axis].mean().reset_index()
+            elif aggregation == "count":
+                plot_df = df.groupby(x_axis)[y_axis].count().reset_index()
+        
+        # Create the chart based on type
+        if chart_type == "bar":
+            if aggregation != "none":
+                ax.bar(plot_df[x_axis], plot_df[y_axis])
+            else:
+                sns.barplot(data=plot_df, x=x_axis, y=y_axis, ax=ax)
+                
+        elif chart_type == "line":
+            if aggregation != "none":
+                ax.plot(plot_df[x_axis], plot_df[y_axis], marker='o')
+            else:
+                sns.lineplot(data=plot_df, x=x_axis, y=y_axis, ax=ax)
+                
+        elif chart_type == "scatter":
+            sns.scatterplot(data=plot_df, x=x_axis, y=y_axis, ax=ax)
+            
+        elif chart_type == "histogram":
+            if x_axis in df.columns:
+                ax.hist(df[x_axis].dropna(), bins=30, alpha=0.7)
+            
+        elif chart_type == "boxplot":
+            if y_axis and x_axis:
+                sns.boxplot(data=plot_df, x=x_axis, y=y_axis, ax=ax)
+            else:
+                ax.boxplot(df.select_dtypes(include=[np.number]).dropna())
+                
+        elif chart_type == "pie":
+            if x_axis:
+                value_counts = df[x_axis].value_counts()
+                ax.pie(value_counts.values, labels=value_counts.index, autopct='%1.1f%%')
+                
+        elif chart_type == "area":
+            if x_axis and y_axis:
+                ax.fill_between(plot_df[x_axis], plot_df[y_axis], alpha=0.7)
+        
+        # Customize the chart
+        ax.set_title(title, fontsize=16, fontweight='bold')
+        if x_axis and chart_type != "pie":
+            ax.set_xlabel(x_axis.replace('_', '').title(), fontsize=12)
+        if y_axis and chart_type not in ["pie", "histogram"]:
+            ax.set_ylabel(y_axis.replace('_', ' ').title(), fontsize=12)
+        
+        # Rotate x-axis labels if they're long
+        if chart_type not in ["pie", "histogram"]:
+            plt.xticks(rotation=45, ha='right')
+        
+        plt.tight_layout()
+        
+        # Save to base64
+        buffer = io.BytesIO()
+        plt.savefig(buffer, format='png', dpi=300, bbox_inches='tight')
+        buffer.seek(0)
+        image_base64 = base64.b64encode(buffer.read()).decode()
+        plt.close(fig)
+        
+        return image_base64
+        
+    except Exception as e:
+        logger.error(f"Error creating chart: {str(e)}")
+        plt.close('all')  # Clean up any open figures
+        return None
 
 # Agent nodes
 async def analyze_intent_node(state: AgentState) -> AgentState:
@@ -95,7 +236,7 @@ Example response format:
 {json.dumps(response_format)}"""
 
     try:
-        json_text = await generate_with_ollama(input_text, temperature=0.4)
+        json_text = await generate_with_gemini(input_text, temperature=0.4)
         
         # Try to extract JSON from markdown code blocks if present
         json_match = re.search(r"```(?:json)?\n(.*?)\n```", json_text, re.DOTALL)
@@ -112,7 +253,14 @@ Example response format:
             if json_obj_match:
                 intent = json.loads(json_obj_match.group(1))
             else:
-                raise
+                # Fallback classification based on keywords
+                prompt_lower = prompt.lower()
+                if any(word in prompt_lower for word in ['chart', 'plot', 'graph', 'visualiz', 'show']):
+                    intent = {"intent": "visualization", "reason": "Keywords suggest visualization"}
+                elif any(word in prompt_lower for word in ['filter', 'transform', 'add', 'modify', 'create column']):
+                    intent = {"intent": "transformation", "reason": "Keywords suggest transformation"}
+                else:
+                    intent = {"intent": "statistical", "reason": "Default to statistical analysis"}
         
         state["intent"] = intent
         state["next_action"] = intent["intent"]
@@ -126,9 +274,10 @@ Example response format:
     return state
 
 async def generate_visualization_node(state: AgentState) -> AgentState:
-    """Generate visualization configuration and code."""
+    """Generate visualization configuration and create the chart."""
     prompt = state["prompt"]
     columns = state["columns"]
+    df = state["dataframe"]
     
     response_format = {
         "chart_type": "bar",
@@ -145,10 +294,10 @@ Available columns: {', '.join(columns)}
 
 Generate a JSON configuration with:
 1. chart_type: 'bar', 'line', 'pie', 'scatter', 'area', 'histogram', 'boxplot'
-2. x_axis: column name for x-axis
-3. y_axis: column name for y-axis (can be None for histograms)
+2. x_axis: column name for x-axis (choose from available columns)
+3. y_axis: column name for y-axis (can be None for histograms, choose from available columns)
 4. aggregation: 'sum', 'mean', 'count', 'none'
-5. title: chart title
+5. title: descriptive chart title
 
 Example response format:
 {json.dumps(response_format)}
@@ -156,7 +305,7 @@ Example response format:
 Provide only the JSON configuration, no explanations."""
 
     try:
-        json_text = await generate_with_ollama(input_text, temperature=0.5)
+        json_text = await generate_with_gemini(input_text, temperature=0.5)
         
         json_match = re.search(r"```(?:json)?\n(.*?)\n```", json_text, re.DOTALL)
         if json_match:
@@ -171,10 +320,42 @@ Provide only the JSON configuration, no explanations."""
             if json_obj_match:
                 chart_config = json.loads(json_obj_match.group(1))
             else:
-                raise
+                # Fallback configuration
+                numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+                categorical_cols = df.select_dtypes(include=['object']).columns.tolist()
+                
+                chart_config = {
+                    "chart_type": "bar",
+                    "x_axis": categorical_cols[0] if categorical_cols else columns[0],
+                    "y_axis": numeric_cols[0] if numeric_cols else columns[1] if len(columns) > 1 else None,
+                    "aggregation": "mean" if numeric_cols else "count",
+                    "title": "Data Visualization"
+                }
+        
+        # Validate column names exist
+        if chart_config.get("x_axis") not in columns:
+            chart_config["x_axis"] = columns[0]
+        if chart_config.get("y_axis") and chart_config["y_axis"] not in columns:
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+            chart_config["y_axis"] = numeric_cols[0] if numeric_cols else None
                 
         state["chart_config"] = chart_config
-        state["next_action"] = "execute"
+        
+        # Create the chart immediately
+        image_base64 = create_chart(df, chart_config)
+        if image_base64:
+            state["result"] = {
+                "type": "visualization",
+                "chart_type": chart_config["chart_type"],
+                "config": chart_config,
+                "image": image_base64,
+                "message": "Visualization created successfully"
+            }
+            state["next_action"] = "complete"
+        else:
+            state["error"] = "Failed to create visualization"
+            state["next_action"] = "error"
+            
         logger.info(f"Generated chart config: {chart_config}")
         
     except Exception as e:
@@ -250,7 +431,7 @@ transformed_df = transformed_df.fillna(0)  # Handle nulls
 Provide only the code, no explanations. DO NOT DEFINE functions, directly perform the operations on the df."""
 
     try:
-        code = await generate_with_ollama(input_text, temperature=0.4)
+        code = await generate_with_gemini(input_text, temperature=0.4)
         
         code_match = re.search(r"```python\n(.*?)\n```", code, re.DOTALL)
         code = code_match.group(1) if code_match else code
@@ -351,7 +532,7 @@ stat_result = {'t_statistic': t_stat, 'p_value': p_value}
 Provide only the code, no explanations. DO NOT DEFINE functions."""
 
     try:
-        code = await generate_with_ollama(input_text, temperature=0.3)
+        code = await generate_with_gemini(input_text, temperature=0.3)
         
         code_match = re.search(r"```python\n(.*?)\n```", code, re.DOTALL)
         code = code_match.group(1) if code_match else code
@@ -401,8 +582,9 @@ async def execute_code_node(state: AgentState) -> AgentState:
                     "type": "transformation",
                     "shape": result_df.shape,
                     "columns": result_df.columns.tolist(),
-                    "head": result_df.head().to_dict(),
-                    "dataframe": result_df
+                    "preview": result_df.head(10).to_html(classes='table table-striped'),
+                    "dataframe": result_df,
+                    "message": f"Data transformed successfully. New shape: {result_df.shape}"
                 }
             else:
                 state["error"] = "No 'transformed_df' found in execution result"
@@ -410,43 +592,14 @@ async def execute_code_node(state: AgentState) -> AgentState:
         elif intent == "statistical":
             if 'stat_result' in safe_globals:
                 stat_result = safe_globals['stat_result']
-                if isinstance(stat_result, pd.DataFrame):
-                    state["result"] = {
-                        "type": "statistical",
-                        "data": stat_result.to_dict(),
-                        "shape": stat_result.shape
-                    }
-                elif isinstance(stat_result, dict):
-                    # Convert any DataFrames in dict to serializable format
-                    serializable_result = {}
-                    for key, value in stat_result.items():
-                        if isinstance(value, pd.DataFrame):
-                            serializable_result[key] = value.to_dict()
-                        else:
-                            serializable_result[key] = value
-                    state["result"] = {
-                        "type": "statistical",
-                        "data": serializable_result
-                    }
-                else:
-                    state["result"] = {
-                        "type": "statistical", 
-                        "data": stat_result
-                    }
+                formatted_result = format_statistical_result(stat_result)
+                state["result"] = {
+                    "type": "statistical",
+                    "data": formatted_result,
+                    "message": "Statistical analysis completed successfully"
+                }
             else:
                 state["error"] = "No 'stat_result' found in execution result"
-                
-        elif intent == "visualization":
-            # For visualization, we would typically save the plot and return path
-            chart_config = state.get("chart_config", {})
-            chart_type = chart_config.get("chart_type", "bar")
-            
-            state["result"] = {
-                "type": "visualization",
-                "chart_type": chart_type,
-                "config": chart_config,
-                "message": "Visualization code executed successfully"
-            }
         
         state["next_action"] = "complete"
         logger.info("Code executed successfully")
@@ -457,6 +610,27 @@ async def execute_code_node(state: AgentState) -> AgentState:
         logger.error(f"Error in execute_code_node: {str(e)}")
     
     return state
+
+def format_statistical_result(stat_result) -> str:
+    """Format statistical results for display in Gradio."""
+    try:
+        if isinstance(stat_result, pd.DataFrame):
+            return stat_result.to_html(classes='table table-striped')
+        elif isinstance(stat_result, dict):
+            html_parts = []
+            for key, value in stat_result.items():
+                html_parts.append(f"<h4>{key.replace('_', ' ').title()}</h4>")
+                if isinstance(value, pd.DataFrame):
+                    html_parts.append(value.to_html(classes='table table-striped'))
+                elif isinstance(value, (int, float)):
+                    html_parts.append(f"<p><strong>{value:.6f}</strong></p>")
+                else:
+                    html_parts.append(f"<p>{str(value)}</p>")
+            return ''.join(html_parts)
+        else:
+            return f"<p><strong>Result:</strong> {str(stat_result)}</p>"
+    except Exception as e:
+        return f"<p><strong>Error formatting result:</strong> {str(e)}</p>"
 
 async def error_handler_node(state: AgentState) -> AgentState:
     """Handle errors and provide feedback."""
@@ -545,6 +719,15 @@ def create_data_analysis_agent():
             "error": "error_handler"
         }
     )
+    workflow.add_conditional_edges(
+        "statistical",
+        route_to_execution,
+        {
+            "execute": "execute",
+            "complete": END,
+            "error": "error_handler"
+        }
+    )
     
     # Final edges
     workflow.add_edge("execute", END)
@@ -580,7 +763,8 @@ async def analyze_data_with_agent(prompt: str, dataframe: pd.DataFrame) -> Dict:
         "code": "",
         "result": {},
         "error": "",
-        "next_action": ""
+        "next_action": "",
+        "plot_path": ""
     }
     
     # Run the agent
