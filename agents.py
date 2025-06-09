@@ -123,6 +123,59 @@ async def generate_with_gemini(prompt, temperature=0.2):
         logger.error(f"Error generating response with Gemini: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error generating response with Gemini: {str(e)}")
 
+
+
+
+
+
+
+
+async def generate(prompt, temperature=0.2, model="phi3:mini"):
+    """Generate response using your deployed Ollama API."""
+    url = "https://sumansuriya7010--ollama-server2-ollamaserver-serve.modal.run/v1/chat/completions"
+    
+    headers = {
+        "Content-Type": "application/json",
+    }
+    
+    payload = {
+        "model": model,  # Can be "phi3:mini" or "mistral:7b"
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        "temperature": temperature,
+        "max_tokens": 8192,
+        "stream": False
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                url,
+                json=payload,
+                headers=headers
+            )
+            response.raise_for_status()
+            result = response.json()
+            
+            # Extract text from Ollama/OpenAI compatible response
+            if "choices" in result and len(result["choices"]) > 0:
+                choice = result["choices"][0]
+                if "message" in choice and "content" in choice["message"]:
+                    return choice["message"]["content"]
+            
+            return ""
+            
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error from Ollama API: {e.response.status_code} - {e.response.text}")
+        raise HTTPException(status_code=e.response.status_code, detail=f"Ollama API error: {e.response.text}")
+    except Exception as e:
+        logger.error(f"Error generating response with Ollama: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error generating response with Ollama: {str(e)}")
+
 def create_chart(df: pd.DataFrame, chart_config: Dict) -> str:
     """Create a matplotlib chart and return the base64 encoded image."""
     try:
@@ -237,7 +290,9 @@ Example response format:
 {json.dumps(response_format)}"""
 
     try:
-        json_text = await generate_with_gemini(input_text, temperature=0.4)
+        # json_text = await generate_with_gemini(input_text, temperature=0.4)
+        json_text = await generate(input_text, temperature=0.4)
+
         
         # Try to extract JSON from markdown code blocks if present
         json_match = re.search(r"```(?:json)?\n(.*?)\n```", json_text, re.DOTALL)
@@ -306,8 +361,8 @@ Example response format:
 Provide only the JSON configuration, no explanations."""
 
     try:
-        json_text = await generate_with_gemini(input_text, temperature=0.5)
-        
+        # json_text = await generate_with_gemini(input_text, temperature=0.5)
+        json_text = await generate(input_text, temperature=0.5)
         json_match = re.search(r"```(?:json)?\n(.*?)\n```", json_text, re.DOTALL)
         if json_match:
             json_text = json_match.group(1)
@@ -432,8 +487,8 @@ transformed_df = transformed_df.fillna(0)  # Handle nulls
 Provide only the code, no explanations. DO NOT DEFINE functions, directly perform the operations on the df."""
 
     try:
-        code = await generate_with_gemini(input_text, temperature=0.4)
-        
+        # code = await generate_with_gemini(input_text, temperature=0.4)
+        code = await generate(input_text, temperature=0.4)
         code_match = re.search(r"```python\n(.*?)\n```", code, re.DOTALL)
         code = code_match.group(1) if code_match else code
         
@@ -533,8 +588,8 @@ stat_result = {'t_statistic': t_stat, 'p_value': p_value}
 Provide only the code, no explanations. DO NOT DEFINE functions."""
 
     try:
-        code = await generate_with_gemini(input_text, temperature=0.3)
-        
+        # code = await generate_with_gemini(input_text, temperature=0.3)
+        code = await generate(input_text, temperature=0.3)
         code_match = re.search(r"```python\n(.*?)\n```", code, re.DOTALL)
         code = code_match.group(1) if code_match else code
         

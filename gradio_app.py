@@ -552,13 +552,16 @@ with gr.Blocks(
 ) as demo:
     
     # Header
-    gr.HTML("""
-    <div class="main-header">
-        <h1>🤖 Data Analysis Agent</h1>
-        <p>Upload your data and get instant insights with AI-powered analysis</p>
-    </div>
-    """)
+    gr.Markdown("""
+    # 🤖 Data Analysis Agent
     
+    Upload your data file and describe what analysis you want to perform. The AI agent will:
+    - 📊 Create visualizations (charts, plots, graphs)
+    - 🔢 Perform statistical analysis (correlations, tests, summaries)
+    - 🔧 Transform your data (filter, aggregate, compute new columns)
+    
+    **Supported formats:** CSV, Excel (.xlsx, .xls), JSON
+    """)
     # Step 1: File Upload
     with gr.Accordion("📁 Step 1: Upload Your Data", open=True):
         file_input = gr.File(
