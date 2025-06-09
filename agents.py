@@ -510,104 +510,60 @@ Provide only the code, no explanations. DO NOT DEFINE functions, directly perfor
     return state
 
 async def generate_statistical_node(state: AgentState) -> AgentState:
-    """Generate pandas/numpy code for statistical analysis."""
-    prompt = state["prompt"]
-    columns = state["columns"]
-    
-    input_text = f"""Write pandas/numpy code to perform the following statistical analysis:
+    """Generate robust pandas/numpy code for statistical analysis with fallbacks."""
+    prompt = state.get("prompt", "")
+    columns = state.get("columns", [])
+    # Use predefined templates based on prompt keywords
+    operations = []
+    if any(x in prompt.lower() for x in ["describe", "summary"]):
+        operations.append("describe")
+    if any(x in prompt.lower() for x in ["correlation", "corr"]):
+        operations.append("correlation")
+    if any(x in prompt.lower() for x in ["ttest", "hypothesis"]):
+        operations.append("ttest")
+    if not operations:
+        operations = ["describe"]  # default
 
-{prompt}
+    code_blocks = []
+    # Build code blocks robustly
+    if "describe" in operations:
+        code_blocks.append(
+            "# Descriptive statistics\n"
+            "desc = df.describe(include='all')\n"
+        )
+    if "correlation" in operations:
+        code_blocks.append(
+            "# Correlation for numeric columns\n"
+            "num_cols = df.select_dtypes(include=[np.number]).columns.tolist()\n"
+            "corr = df[num_cols].corr() if len(num_cols) > 1 else pd.DataFrame()\n"
+        )
+    if "ttest" in operations and 'category' in columns:
+        # safe t-test only if category and value exist
+        code_blocks.append(
+            "# Independent T-test between two groups in 'category' on 'value' column\n"
+            "groups = df['category'].dropna().unique().tolist()[:2]\n"
+            "if len(groups) == 2:\n"
+            "    g1 = df[df['category'] == groups[0]]['value'].dropna()\n"
+            "    g2 = df[df['category'] == groups[1]]['value'].dropna()\n"
+            "    t_stat, p_val = stats.ttest_ind(g1, g2, nan_policy='omit')\n"
+            "else:\n"
+            "    t_stat, p_val = None, None\n"
+        )
+    # Assemble result dict
+    code_blocks.append(
+        "# Assemble results\n"
+        "results = {}\n"
+        "if 'desc' in locals(): results['descriptive'] = desc\n"
+        "if 'corr' in locals(): results['correlation'] = corr\n"
+        "if 't_stat' in locals(): results['ttest'] = {'t_statistic': t_stat, 'p_value': p_val}\n"
+        "# Final assignment\n"
+        "stat_result = results\n"
+    )
 
-Available columns: {', '.join(columns)}
+    state['code'] = '\n'.join(code_blocks)
+    state['next_action'] = 'execute'
+    logger.info(f"Generated statistical code with operations {operations}")
 
-Statistical Analysis Knowledge Base:
-1. Descriptive Statistics:
-   - df.describe(): Summary statistics
-   - df.mean(), df.std(): Mean and standard deviation
-   - df.var(): Variance
-   - df.min(), df.max(): Min/max values
-   - df.quantile([0.25, 0.5, 0.75]): Quartiles
-   - df.corr(): Correlation matrix
-
-2. Hypothesis Testing (scipy.stats):
-   - stats.ttest_ind(): Independent t-test
-   - stats.ttest_rel(): Paired t-test
-   - stats.chi2_contingency(): Chi-square test
-   - stats.pearsonr(): Pearson correlation
-   - stats.spearmanr(): Spearman correlation
-
-3. Regression Analysis:
-   - np.polyfit(): Polynomial fitting
-   - stats.linregress(): Linear regression
-   - df.rolling().corr(): Rolling correlation
-
-4. Data Quality:
-   - df.isnull().sum(): Count missing values
-   - df.duplicated().sum(): Count duplicates
-   - df.value_counts(): Value counts
-
-Requirements:
-1. Use pandas and numpy functions
-2. Include proper statistical computations
-3. Store main result in 'stat_result'
-4. DO NOT define functions
-5. Handle null values appropriately
-6. Include interpretation comments
-
-Available variables:
-- df: pandas DataFrame
-- pd: pandas module
-- np: numpy module
-- stats: scipy.stats module
-
-Example formats:
-
-For correlation analysis:
-```python
-# Calculate correlation matrix
-correlation_matrix = df.select_dtypes(include=[np.number]).corr()
-stat_result = correlation_matrix
-```
-
-For descriptive statistics:
-```python
-# Generate summary statistics
-stat_result = df.describe()
-# Add correlation for numeric columns
-numeric_cols = df.select_dtypes(include=[np.number]).columns
-if len(numeric_cols) > 1:
-    stat_result = {
-        'descriptive': df.describe(),
-        'correlation': df[numeric_cols].corr()
-    }
-```
-
-For hypothesis testing:
-```python
-# Perform t-test between two groups
-group1 = df[df['category'] == 'A']['value']
-group2 = df[df['category'] == 'B']['value']
-t_stat, p_value = stats.ttest_ind(group1, group2)
-stat_result = {'t_statistic': t_stat, 'p_value': p_value}
-```
-
-Provide only the code, no explanations. DO NOT DEFINE functions."""
-
-    try:
-        # code = await generate_with_gemini(input_text, temperature=0.3)
-        code = await generate_with_gemini(input_text, temperature=0.3)
-        code_match = re.search(r"```python\n(.*?)\n```", code, re.DOTALL)
-        code = code_match.group(1) if code_match else code
-        
-        state["code"] = code
-        state["next_action"] = "execute"
-        logger.info(f"Generated statistical code: {code}")
-        
-    except Exception as e:
-        state["error"] = f"Error generating statistical code: {str(e)}"
-        state["next_action"] = "error"
-        logger.error(f"Error in generate_statistical_node: {str(e)}")
-    
     return state
 
 async def execute_code_node(state: AgentState) -> AgentState:
