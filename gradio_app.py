@@ -1,7 +1,7 @@
 import gradio as gr
 import pandas as pd
 import json
-from agents import analyze_data_with_agent # Assuming 'agents' module is available
+from agents import analyze_data_with_agent 
 import io
 import asyncio
 import logging
@@ -33,14 +33,16 @@ async def process_data_and_prompt(file, prompt):
         df.columns = [str(col).strip().lower().replace(' ', '_').replace('-', '_') for col in df.columns]
         
         # Show data preview
+        # data_preview = f"""
+        # <div class="data-section">
+        #     <h3>Data Preview</h3>
+        #     <p><strong>Shape:</strong> {df.shape[0]} rows × {df.shape[1]} columns</p>
+        #     <p><strong>Columns:</strong> {', '.join(df.columns.tolist())}</p>
+        #     {df.head().to_html(classes='table data-table', table_id='data-preview')}
+        # </div>
+        # """
         data_preview = f"""
-        <div class="data-section">
-            <h3>Data Preview</h3>
-            <p><strong>Shape:</strong> {df.shape[0]} rows × {df.shape[1]} columns</p>
-            <p><strong>Columns:</strong> {', '.join(df.columns.tolist())}</p>
-            {df.head().to_html(classes='table data-table', table_id='data-preview')}
-        </div>
-        """
+<div></div>"""
 
         # Process with agent
         logger.info(f"Processing prompt: {prompt}")
@@ -159,7 +161,7 @@ def generate_preview(file):
     """Generate a preview of the uploaded file."""
     try:
         if not file:
-            return "Please upload a data file."
+            return "Please upload a data file to see preview."
             
         # Read the uploaded file
         if file.name.endswith('.csv'):
@@ -177,16 +179,23 @@ def generate_preview(file):
         # Show data preview
         data_preview = f"""
         <div class="data-section">
-            <h3>Data Preview</h3>
-            <p><strong>Shape:</strong> {df.shape[0]} rows × {df.shape[1]} columns</p>
-            <p><strong>Columns:</strong> {', '.join(df.columns.tolist())}</p>
-            {df.head().to_html(classes='table data-table', table_id='data-preview')}
+            <h3>📊 Data Preview</h3>
+            <div class="data-stats">
+                <span class="stat-badge">📏 {df.shape[0]} rows</span>
+                <span class="stat-badge">📋 {df.shape[1]} columns</span>
+            </div>
+            <div class="columns-info">
+                <strong>Columns:</strong> {', '.join(df.columns.tolist())}
+            </div>
+            <div class="table-container">
+                {df.head(4).to_html(classes='table data-table', table_id='data-preview')}
+            </div>
         </div>
         """
         return data_preview
     except Exception as e:
         logger.error(f"Error generating preview: {str(e)}")
-        return f"Error generating preview: {str(e)}"
+        return f"<div class='error-box'>Error generating preview: {str(e)}</div>"
 
 # Sample prompts for different analysis types
 sample_prompts = {
@@ -216,187 +225,393 @@ sample_prompts = {
 # Create the Gradio interface
 with gr.Blocks(
     title="Data Analysis Agent",
-    theme=gr.themes.Soft(), # Consider gr.themes.Monochrome() or gr.themes.Glass() for more explicit dark mode support, or customize Soft.
+    theme=gr.themes.Soft(),
     css="""
-    /* General container styling */
+    /* Main container */
     .gradio-container {
-        max-width: 1200px;
+        max-width: 900px;
         margin: auto;
+        padding: 20px;
     }
 
-    /* Base table styling for both light and dark mode */
+    /* Header styling */
+    .main-header {
+        text-align: center;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 30px;
+        border-radius: 15px;
+        margin-bottom: 30px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+    }
+    
+    .main-header h1 {
+        margin: 0;
+        font-size: 2.5em;
+        font-weight: 600;
+    }
+    
+    .main-header p {
+        margin: 10px 0 0 0;
+        font-size: 1.1em;
+        opacity: 0.9;
+    }
+
+    /* Accordion styling */
+    .gr-accordion {
+        margin-bottom: 20px !important;
+        border-radius: 12px !important;
+        border: 1px solid var(--border-color-primary) !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05) !important;
+        overflow: hidden !important;
+    }
+    
+    .gr-accordion-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+        color: white !important;
+        padding: 15px 20px !important;
+        font-weight: 600 !important;
+        font-size: 1.1em !important;
+        border: none !important;
+        cursor: pointer !important;
+        transition: all 0.3s ease !important;
+    }
+    
+    .gr-accordion-header:hover {
+        background: linear-gradient(135deg, #5a6fd8 0%, #6a4190 100%) !important;
+        transform: translateY(-1px) !important;
+    }
+    
+    .gr-accordion-content {
+        background: var(--background-fill-secondary) !important;
+        padding: 25px !important;
+        border-top: 1px solid var(--border-color-primary) !important;
+    }
+    
+    /* Special styling for example prompt accordions */
+    .gr-accordion .gr-accordion {
+        margin-bottom: 15px !important;
+        border-radius: 8px !important;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.1) !important;
+    }
+    
+    .gr-accordion .gr-accordion .gr-accordion-header {
+        background: var(--color-accent-soft) !important;
+        color: var(--text-color-body) !important;
+        padding: 12px 16px !important;
+        font-size: 1em !important;
+        font-weight: 500 !important;
+    }
+    
+    .gr-accordion .gr-accordion .gr-accordion-header:hover {
+        background: var(--color-accent) !important;
+        color: white !important;
+        transform: none !important;
+    }
+    
+    .gr-accordion .gr-accordion .gr-accordion-content {
+        background: var(--background-fill-primary) !important;
+        padding: 15px !important;
+    }
+
+    /* Section styling (keeping for compatibility) */
+    .section {
+        background: var(--background-fill-secondary);
+        border-radius: 12px;
+        padding: 25px;
+        margin-bottom: 25px;
+        border: 1px solid var(--border-color-primary);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+    
+    .section h2 {
+        margin: 0 0 20px 0;
+        color: var(--text-color-body);
+        font-size: 1.4em;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    /* File upload styling */
+    .upload-area {
+        border: 2px dashed var(--border-color-accent);
+        border-radius: 10px;
+        padding: 20px;
+        text-align: center;
+        background: var(--background-fill-primary);
+        transition: all 0.3s ease;
+    }
+    
+    .upload-area:hover {
+        border-color: var(--color-accent);
+        background: var(--background-fill-hover);
+    }
+
+    /* Data preview styling */
+    .data-section {
+        background: var(--background-fill-primary);
+        border-radius: 10px;
+        padding: 20px;
+        border: 1px solid var(--border-color-primary);
+        margin: 15px 0;
+    }
+    
+    .data-section h3 {
+        margin: 0 0 15px 0;
+        color: var(--text-color-body);
+        font-size: 1.2em;
+    }
+    
+    .data-stats {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 15px;
+        flex-wrap: wrap;
+    }
+    
+    .stat-badge {
+        background: var(--color-accent-soft);
+        color: var(--text-color-body);
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 0.9em;
+        font-weight: 500;
+    }
+    
+    .columns-info {
+        margin-bottom: 15px;
+        padding: 10px;
+        background: var(--background-fill-secondary);
+        border-radius: 8px;
+        font-size: 0.9em;
+    }
+    
+    .table-container {
+        overflow-x: auto;
+        border-radius: 8px;
+    }
+
+    /* Table styling */
     .table {
         width: 100%;
         border-collapse: collapse;
-        margin: 15px 0;
-        font-size: 0.9em;
+        font-size: 0.85em;
+        background: var(--background-fill-primary);
     }
-    .table th, .table td {
-        border: 1px solid var(--border-color-primary); /* Use Gradio's CSS variables */
-        padding: 8px;
+    
+    .table th {
+        background: var(--background-fill-secondary);
+        color: var(--text-color-body);
+        font-weight: 600;
+        padding: 12px 8px;
+        border: 1px solid var(--border-color-primary);
         text-align: left;
     }
-    .table th {
-        background-color: var(--background-fill-secondary); /* Use Gradio's CSS variables */
-        font-weight: bold;
+    
+    .table td {
+        padding: 10px 8px;
+        border: 1px solid var(--border-color-primary);
+        color: var(--text-color-body);
     }
-    .table-striped tr:nth-child(even) {
-        background-color: var(--background-fill-hover); /* Use Gradio's CSS variables */
+    
+    .table tr:nth-child(even) {
+        background: var(--background-fill-hover);
     }
 
-    /* Specific styling for data preview and transformed data tables */
-    .data-table {
-        color: var(--text-color-body);
-        background-color: var(--background-fill-primary);
+    /* Prompt examples styling */
+    .prompt-examples {
+        display: grid;
+        gap: 15px;
+        margin-top: 15px;
     }
-    .data-table th {
-        color: var(--text-color-body);
-    }
-    .data-table td {
-        color: var(--text-color-body);
-    }
-
-    /* Styling for the HTML content boxes */
-    .data-section, .analysis-result {
-        margin-bottom: 20px;
-        padding: 15px;
+    
+    .prompt-category {
+        background: var(--background-fill-primary);
         border-radius: 8px;
-        background-color: var(--background-fill-secondary);
+        padding: 15px;
         border: 1px solid var(--border-color-primary);
     }
-
-    .data-section h3, .analysis-result h3 {
+    
+    .prompt-category h4 {
+        margin: 0 0 10px 0;
         color: var(--text-color-body);
-        margin-top: 0;
-        margin-bottom: 10px;
+        font-size: 1em;
+    }
+    
+    .prompt-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    
+    .prompt-btn {
+        font-size: 0.8em !important;
+        padding: 6px 12px !important;
+        border-radius: 15px !important;
+        background: var(--color-accent-soft) !important;
+        color: var(--text-color-body) !important;
+        border: 1px solid var(--border-color-accent) !important;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    
+    .prompt-btn:hover {
+        background: var(--color-accent) !important;
+        color: white !important;
     }
 
-    /* Error box styling */
-    .error-box {
-        background-color: var(--color-error-soft); /* Using Gradio's error color variable */
-        border: 1px solid var(--color-error-border);
-        padding: 15px;
-        border-radius: 5px;
-        margin-top: 20px;
-        color: var(--color-error-text);
+    /* Analysis results styling */
+    .analysis-result {
+        background: var(--background-fill-primary);
+        border-radius: 10px;
+        padding: 20px;
+        margin: 15px 0;
+        border: 1px solid var(--border-color-primary);
     }
-    .error-box h3 {
-        color: var(--color-error-text);
-    }
-    .error-box ul {
-        margin-top: 10px;
-        padding-left: 20px;
+    
+    .analysis-result h3 {
+        margin: 0 0 15px 0;
+        color: var(--text-color-body);
     }
 
-    /* Visualization specific styling */
+    /* Chart styling */
     .chart-container {
         text-align: center;
         margin: 20px 0;
-        background-color: var(--background-fill-primary); /* Ensures background is appropriate for charts */
-        padding: 10px;
-        border-radius: 5px;
+        background: var(--background-fill-primary);
+        padding: 15px;
+        border-radius: 8px;
+        border: 1px solid var(--border-color-primary);
     }
+    
     .chart-image {
         max-width: 100%;
         height: auto;
-        border: 1px solid var(--border-color-accent);
-        border-radius: 5px;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
     }
 
-    /* Statistical output box styling */
-    .stat-output-box {
-        background-color: var(--background-fill-primary);
+    /* Error styling */
+    .error-box {
+        background: #fee;
+        border: 1px solid #fcc;
+        color: #c33;
         padding: 15px;
-        border-radius: 5px;
-        margin: 10px 0;
-        color: var(--text-color-body); /* Ensure text is readable */
-        border: 1px solid var(--border-color-primary);
+        border-radius: 8px;
+        margin: 15px 0;
+    }
+    
+    .error-box h3 {
+        margin: 0 0 10px 0;
+        color: #c33;
     }
 
-    /* Transformed data preview styling */
-    .transformed-data-preview {
-        background-color: var(--background-fill-primary);
-        padding: 15px;
-        border-radius: 5px;
-        margin: 10px 0;
-        color: var(--text-color-body);
-        border: 1px solid var(--border-color-primary);
+    /* Button styling */
+    .analyze-btn {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 25px !important;
+        padding: 15px 30px !important;
+        font-size: 1.1em !important;
+        font-weight: 600 !important;
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4) !important;
+        transition: all 0.3s ease !important;
     }
-    .transformed-data-preview h4 {
-        color: var(--text-color-body);
-        margin-top: 0;
-        margin-bottom: 10px;
+    
+    .analyze-btn:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.6) !important;
     }
 
-    /* General text colors to ensure readability in dark mode */
-    h1, h2, h3, h4, p, strong, li {
-        color: var(--text-color-body);
+    /* Responsive design */
+    @media (max-width: 768px) {
+        .gradio-container {
+            padding: 10px;
+        }
+        
+        .main-header h1 {
+            font-size: 2em;
+        }
+        
+        .section {
+            padding: 15px;
+        }
+        
+        .data-stats {
+            flex-direction: column;
+        }
+        
+        .prompt-buttons {
+            flex-direction: column;
+        }
     }
     """
 ) as demo:
     
-    gr.Markdown("""
-    # 🤖 Data Analysis Agent
-    
-    Upload your data file and describe what analysis you want to perform. The AI agent will:
-    - 📊 Create visualizations (charts, plots, graphs)
-    - 🔢 Perform statistical analysis (correlations, tests, summaries)
-    - 🔧 Transform your data (filter, aggregate, compute new columns)
-    
-    **Supported formats:** CSV, Excel (.xlsx, .xls), JSON
+    # Header
+    gr.HTML("""
+    <div class="main-header">
+        <h1>🤖 Data Analysis Agent</h1>
+        <p>Upload your data and get instant insights with AI-powered analysis</p>
+    </div>
     """)
     
-    with gr.Row():
-        with gr.Column(scale=1):
-            gr.Markdown("### 📁 Upload Data")
-            file_input = gr.File(
-                label="Choose your data file",
-                file_types=[".csv", ".xlsx", ".xls", ".json"],
-                type="filepath"
-            )
-            
-            gr.Markdown("### 📋 Data Preview")
-            preview_output = gr.HTML(label="File Preview")
-            
-            gr.Markdown("### 💬 Analysis Request")
-            prompt_input = gr.Textbox(
-                label="Describe what you want to analyze",
-                placeholder="e.g., 'Create a bar chart showing sales by category' or 'Calculate correlation between price and quantity'",
-                lines=3
-            )
-            
-            # Sample prompts
-            gr.Markdown("### 💡 Example Prompts")
-            
-            with gr.Accordion("Visualization Examples", open=False):
-                for prompt in sample_prompts["Visualization"]:
-                    gr.Button(prompt, size="sm").click(
-                        lambda p=prompt: p, inputs=[], outputs=prompt_input, queue=False
-                    )
-            
-            with gr.Accordion("Statistical Analysis Examples", open=False):
-                for prompt in sample_prompts["Statistical Analysis"]:
-                    gr.Button(prompt, size="sm").click(
-                        lambda p=prompt: p, inputs=[], outputs=prompt_input, queue=False
-                    )
-            
-            with gr.Accordion("Data Transformation Examples", open=False):
-                for prompt in sample_prompts["Data Transformation"]:
-                    gr.Button(prompt, size="sm").click(
-                        lambda p=prompt: p, inputs=[], outputs=prompt_input, queue=False
-                    )
-            
-            submit_btn = gr.Button("🚀 Analyze Data", variant="primary", size="lg")
+    # Step 1: File Upload
+    with gr.Accordion("📁 Step 1: Upload Your Data", open=True):
+        file_input = gr.File(
+            label="Choose your data file (CSV, Excel, JSON)",
+            file_types=[".csv", ".xlsx", ".xls", ".json"],
+            type="filepath"
+        )
+    
+    # Step 2: Data Preview
+    with gr.Accordion("👀 Step 2: Data Preview", open=True):
+        preview_output = gr.HTML(value="<p style='text-align: center; color: #888; padding: 40px;'>Upload a file to see data preview</p>")
+    
+    # Step 3: Analysis Prompt
+    with gr.Accordion("💬 Step 3: Describe Your Analysis", open=True):
+        prompt_input = gr.Textbox(
+            label="What would you like to analyze?",
+            placeholder="e.g., 'Create a bar chart showing sales by category' or 'Calculate correlation between price and quantity'",
+            lines=3
+        )
         
-        with gr.Column(scale=2):
-            gr.Markdown("### 📋 Results")
-            output = gr.HTML(label="Analysis Results")
-            
-            gr.Markdown("### 📥 Downloads")
-            download_output = gr.File(label="Download Transformed Data", visible=True)
-            
-            gr.Markdown("### ℹ️ Status")
-            status_output = gr.Textbox(label="Status", visible=False)
+        # Example prompts in separate collapsible sections
+        gr.HTML('<h4 style="margin: 20px 0 10px 0;">💡 Need inspiration? Try these examples:</h4>')
+        
+        with gr.Accordion("📊 Visualization Examples", open=False):
+            for prompt in sample_prompts["Visualization"]:
+                gr.Button(prompt, size="sm", elem_classes=["prompt-btn"]).click(
+                    lambda p=prompt: p, inputs=[], outputs=prompt_input, queue=False
+                )
+        
+        with gr.Accordion("📈 Statistical Analysis Examples", open=False):
+            for prompt in sample_prompts["Statistical Analysis"]:
+                gr.Button(prompt, size="sm", elem_classes=["prompt-btn"]).click(
+                    lambda p=prompt: p, inputs=[], outputs=prompt_input, queue=False
+                )
+        
+        with gr.Accordion("🔧 Data Transformation Examples", open=False):
+            for prompt in sample_prompts["Data Transformation"]:
+                gr.Button(prompt, size="sm", elem_classes=["prompt-btn"]).click(
+                    lambda p=prompt: p, inputs=[], outputs=prompt_input, queue=False
+                )
+    
+    # Step 4: Analysis Button
+    with gr.Accordion("🚀 Step 4: Run Analysis", open=True):
+        submit_btn = gr.Button("🚀 Analyze Data", variant="primary", size="lg", elem_classes=["analyze-btn"])
+    
+    # Step 5: Results
+    with gr.Accordion("📊 Step 5: Analysis Results", open=True):
+        output = gr.HTML(value="<p style='text-align: center; color: #888; padding: 40px;'>Click 'Analyze Data' to see results here</p>")
+    
+    # Step 6: Downloads
+    with gr.Accordion("📥 Step 6: Downloads", open=True):
+        download_output = gr.File(label="Transformed Data (if applicable)", visible=True)
+        gr.HTML("<p style='color: #666; font-size: 0.9em;'>Download will appear here for data transformation results</p>")
     
     # Event handlers
     file_input.change(
@@ -408,42 +623,9 @@ with gr.Blocks(
     submit_btn.click(
         fn=process_sync,
         inputs=[file_input, prompt_input],
-        outputs=[output, download_output, status_output],
+        outputs=[output, download_output],
         show_progress=True
     )
-    
-    # Example section
-    with gr.Row():
-        gr.Markdown("""
-        ### 🎯 How to Use
-        
-        1. **Upload** your data file (CSV, Excel, or JSON)
-        2. **Describe** what analysis you want in plain English
-        3. **Click** "Analyze Data" to get results
-        
-        ### 📊 What You Can Do
-        
-        **Visualizations:**
-        - Bar charts, line plots, scatter plots
-        - Histograms, box plots, pie charts
-        - Automatic chart type selection based on your data
-        
-        **Statistical Analysis:**
-        - Descriptive statistics and summaries
-        - Correlation analysis
-        - Hypothesis testing
-        - Data quality checks
-        
-        **Data Transformation:**
-        - Filter and sort data
-        - Create new calculated columns
-        - Group and aggregate data
-        - Clean and prepare data
-        
-        ### ⚙️ Requirements
-        - Ollama server running locally
-        - Model configured in environment variables
-        """)
 
 if __name__ == "__main__":
     demo.launch(
