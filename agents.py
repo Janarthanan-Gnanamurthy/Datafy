@@ -52,6 +52,7 @@ class AgentState(TypedDict):
     next_action: str
     plot_path: str
 
+ 
 async def generate_with_gemini(prompt, temperature=0.2):
     """Generate response using Gemini API."""
     url = f"{GEMINI_BASE_URL}/{GEMINI_MODEL}:generateContent"
