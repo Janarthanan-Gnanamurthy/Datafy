@@ -52,76 +52,51 @@ class AgentState(TypedDict):
     next_action: str
     plot_path: str
 
- 
-async def generate_with_gemini(prompt, temperature=0.2):
-    """Generate response using Gemini API."""
-    url = f"{GEMINI_BASE_URL}/{GEMINI_MODEL}:generateContent"
+async def generate(prompt, temperature=0.2, model="gemma3:12b-it-qat"):
+    """Generate response using your deployed Ollama API."""
+    url = "https://sumansuriya7010--ollama-server3-ollamaserver-serve.modal.run/v1/chat/completions"
     
     headers = {
         "Content-Type": "application/json",
     }
     
     payload = {
-        "contents": [
+        "model": model, 
+        "messages": [
             {
-                "parts": [
-                    {
-                        "text": prompt
-                    }
-                ]
+                "role": "user",
+                "content": prompt
             }
         ],
-        "generationConfig": {
-            "temperature": temperature,
-            "topP": 0.95,
-            "topK": 40,
-            "maxOutputTokens": 8192,
-        },
-        "safetySettings": [
-            {
-                "category": "HARM_CATEGORY_HARASSMENT",
-                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-            },
-            {
-                "category": "HARM_CATEGORY_HATE_SPEECH", 
-                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-            },
-            {
-                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-            },
-            {
-                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
-            }
-        ]
+        "temperature": temperature,
+        "max_tokens": 8192,
+        "stream": False
     }
     
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(
-                url, 
-                json=payload, 
-                headers=headers,
-                params={"key": GEMINI_API_KEY}
+                url,
+                json=payload,
+                headers=headers
             )
             response.raise_for_status()
             result = response.json()
             
-            # Extract text from Gemini response
-            if "candidates" in result and len(result["candidates"]) > 0:
-                candidate = result["candidates"][0]
-                if "content" in candidate and "parts" in candidate["content"]:
-                    return candidate["content"]["parts"][0].get("text", "")
+            # Extract text from Ollama/OpenAI compatible response
+            if "choices" in result and len(result["choices"]) > 0:
+                choice = result["choices"][0]
+                if "message" in choice and "content" in choice["message"]:
+                    return choice["message"]["content"]
             
             return ""
             
     except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error from Gemini API: {e.response.status_code} - {e.response.text}")
-        raise HTTPException(status_code=e.response.status_code, detail=f"Gemini API error: {e.response.text}")
+        logger.error(f"HTTP error from Ollama API: {e.response.status_code} - {e.response.text}")
+        raise HTTPException(status_code=e.response.status_code, detail=f"Ollama API error: {e.response.text}")
     except Exception as e:
-        logger.error(f"Error generating response with Gemini: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error generating response with Gemini: {str(e)}")
+        logger.error(f"Error generating response with Ollama: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error generating response with Ollama: {str(e)}")
 
 def create_chart(df: pd.DataFrame, chart_config: Dict) -> str:
     """Create a matplotlib chart and return the base64 encoded image."""
@@ -237,7 +212,7 @@ Example response format:
 {json.dumps(response_format)}"""
 
     try:
-        json_text = await generate_with_gemini(input_text, temperature=0.4)
+        json_text = await generate(input_text, temperature=0.4)
         
         # Try to extract JSON from markdown code blocks if present
         json_match = re.search(r"```(?:json)?\n(.*?)\n```", json_text, re.DOTALL)
@@ -306,7 +281,7 @@ Example response format:
 Provide only the JSON configuration, no explanations."""
 
     try:
-        json_text = await generate_with_gemini(input_text, temperature=0.5)
+        json_text = await generate(input_text, temperature=0.5)
         
         json_match = re.search(r"```(?:json)?\n(.*?)\n```", json_text, re.DOTALL)
         if json_match:
@@ -432,7 +407,7 @@ transformed_df = transformed_df.fillna(0)  # Handle nulls
 Provide only the code, no explanations. DO NOT DEFINE functions, directly perform the operations on the df."""
 
     try:
-        code = await generate_with_gemini(input_text, temperature=0.4)
+        code = await generate(input_text, temperature=0.4)
         
         code_match = re.search(r"```python\n(.*?)\n```", code, re.DOTALL)
         code = code_match.group(1) if code_match else code
@@ -451,6 +426,8 @@ Provide only the code, no explanations. DO NOT DEFINE functions, directly perfor
 async def generate_statistical_node(state: AgentState) -> AgentState:
     """Generate robust pandas/numpy code for statistical analysis with fallbacks."""
     prompt = state.get("prompt", "")
+    print(prompt+" - Prompt received in generate_statistical_node")
+
     columns = state.get("columns", [])
     # Use predefined templates based on prompt keywords
     operations = []
@@ -504,42 +481,71 @@ async def generate_statistical_node(state: AgentState) -> AgentState:
     logger.info(f"Generated statistical code with operations {operations}")
     return state
 
+
+
 async def execute_code_node(state: AgentState) -> AgentState:
-    """Execute the generated code safely with error resilience."""
-    code = state.get('code', '')
-    df = state.get('dataframe')
+    """Execute the generated code safely."""
+    code = state["code"]
+    df = state["dataframe"]
+    
     if not code:
-        state['error'] = "No code to execute"
-        state['next_action'] = 'error'
+        state["error"] = "No code to execute"
+        state["next_action"] = "error"
         return state
-    safe_globals = {'df': df, 'pd': pd, 'np': np, 'stats': stats}
+    
     try:
-        exec(code, safe_globals)
-        stat_result = safe_globals.get('stat_result', {})
-        # Ensure consistent format
-        if not isinstance(stat_result, dict):
-            stat_result = {'result': stat_result}
-        formatted = format_statistical_result(stat_result)
-        state['result'] = {
-            'type': 'statistical',
-            'data': formatted,
-            'message': 'Statistical analysis completed successfully'
+        # Create safe execution environment
+        safe_globals = {
+            'df': df,
+            'pd': pd,
+            'np': np,
+            'stats': stats,
+            'plt': plt,
+            'sns': sns
         }
-        state['next_action'] = 'complete'
-    except Exception as e:
-        logger.error(f"Execution error: {e}")
-        # Fallback simple describe
-        try:
-            fallback = df.describe(include='all').to_html()
+        
+        # Execute the code
+        exec(code, safe_globals)
+        
+        # Extract results based on intent
+        intent = state["intent"]["intent"]
+        
+        if intent == "transformation":
+            if 'transformed_df' in safe_globals:
+                result_df = safe_globals['transformed_df']
+                state["result"] = {
+                    "type": "transformation",
+                    "shape": result_df.shape,
+                    "columns": result_df.columns.tolist(),
+                    "preview": result_df.head(10).to_html(classes='table table-striped'),
+                    "dataframe": result_df,
+                    "message": f"Data transformed successfully. New shape: {result_df.shape}"
+                }
+            else:
+                state["error"] = "No 'transformed_df' found in execution result"
+                
+        elif intent == "statistical":
+            exec(code, safe_globals)
+            stat_result = safe_globals.get('stat_result')
+            if stat_result is None:
+                raise ValueError("'stat_result' not found after execution")
+            if not isinstance(stat_result, dict):
+                stat_result = {'result': stat_result}
+            formatted = format_statistical_result(stat_result)
             state['result'] = {
                 'type': 'statistical',
-                'data': fallback,
-                'message': 'Fallback descriptive statistics applied due to error'
+                'data': formatted,
+                'message': 'Statistical analysis completed successfully'
             }
-            state['next_action'] = 'complete'
-        except Exception as fe:
-            state['error'] = f"Error executing fallback: {fe}"
-            state['next_action'] = 'error'
+        
+        state["next_action"] = "complete"
+        logger.info("Code executed successfully")
+        
+    except Exception as e:
+        state["error"] = f"Error executing code: {str(e)}"
+        state["next_action"] = "error"
+        logger.error(f"Error in execute_code_node: {str(e)}")
+    
     return state
 
 def format_statistical_result(stat_result) -> str:
