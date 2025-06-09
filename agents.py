@@ -130,6 +130,12 @@ async def generate_with_gemini(prompt, temperature=0.2):
 
 
 
+
+
+
+
+
+
 async def generate(prompt, temperature=0.2, model="phi3:mini"):
     """Generate response using your deployed Ollama API."""
     url = "https://sumansuriya7010--ollama-server2-ollamaserver-serve.modal.run/v1/chat/completions"
@@ -589,7 +595,7 @@ Provide only the code, no explanations. DO NOT DEFINE functions."""
 
     try:
         # code = await generate_with_gemini(input_text, temperature=0.3)
-        code = await generate(input_text, temperature=0.3)
+        code = await generate_with_gemini(input_text, temperature=0.3)
         code_match = re.search(r"```python\n(.*?)\n```", code, re.DOTALL)
         code = code_match.group(1) if code_match else code
         
@@ -605,66 +611,41 @@ Provide only the code, no explanations. DO NOT DEFINE functions."""
     return state
 
 async def execute_code_node(state: AgentState) -> AgentState:
-    """Execute the generated code safely."""
-    code = state["code"]
-    df = state["dataframe"]
-    
+    """Execute the generated code safely with error resilience."""
+    code = state.get('code', '')
+    df = state.get('dataframe')
     if not code:
-        state["error"] = "No code to execute"
-        state["next_action"] = "error"
+        state['error'] = "No code to execute"
+        state['next_action'] = 'error'
         return state
-    
+    safe_globals = {'df': df, 'pd': pd, 'np': np, 'stats': stats}
     try:
-        # Create safe execution environment
-        safe_globals = {
-            'df': df,
-            'pd': pd,
-            'np': np,
-            'stats': stats,
-            'plt': plt,
-            'sns': sns
-        }
-        
-        # Execute the code
         exec(code, safe_globals)
-        
-        # Extract results based on intent
-        intent = state["intent"]["intent"]
-        
-        if intent == "transformation":
-            if 'transformed_df' in safe_globals:
-                result_df = safe_globals['transformed_df']
-                state["result"] = {
-                    "type": "transformation",
-                    "shape": result_df.shape,
-                    "columns": result_df.columns.tolist(),
-                    "preview": result_df.head(10).to_html(classes='table table-striped'),
-                    "dataframe": result_df,
-                    "message": f"Data transformed successfully. New shape: {result_df.shape}"
-                }
-            else:
-                state["error"] = "No 'transformed_df' found in execution result"
-                
-        elif intent == "statistical":
-            if 'stat_result' in safe_globals:
-                stat_result = safe_globals['stat_result']
-                formatted_result = format_statistical_result(stat_result)
-                state["result"] = {
-                    "type": "statistical",
-                    "data": formatted_result,
-                    "message": "Statistical analysis completed successfully"
-                }
-            else:
-                state["error"] = "No 'stat_result' found in execution result"
-        
-        state["next_action"] = "complete"
-        logger.info("Code executed successfully")
-        
+        stat_result = safe_globals.get('stat_result', {})
+        # Ensure consistent format
+        if not isinstance(stat_result, dict):
+            stat_result = {'result': stat_result}
+        formatted = format_statistical_result(stat_result)
+        state['result'] = {
+            'type': 'statistical',
+            'data': formatted,
+            'message': 'Statistical analysis completed successfully'
+        }
+        state['next_action'] = 'complete'
     except Exception as e:
-        state["error"] = f"Error executing code: {str(e)}"
-        state["next_action"] = "error"
-        logger.error(f"Error in execute_code_node: {str(e)}")
-    
+        logger.error(f"Execution error: {e}")
+        # Fallback simple describe
+        try:
+            fallback = df.describe(include='all').to_html()
+            state['result'] = {
+                'type': 'statistical',
+                'data': fallback,
+                'message': 'Fallback descriptive statistics applied due to error'
+            }
+            state['next_action'] = 'complete'
+        except Exception as fe:
+            state['error'] = f"Error executing fallback: {fe}"
+            state['next_action'] = 'error'
     return state
 
 def format_statistical_result(stat_result) -> str:
